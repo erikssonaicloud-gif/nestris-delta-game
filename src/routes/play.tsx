@@ -1,27 +1,90 @@
-import { useEffect } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowLeft } from "lucide-react";
-import { ControlPads } from "@/components/game/pads";
-import { GameHud } from "@/components/game/hud";
-import { DualWells } from "@/components/game/wells";
+import { ArrowLeft, GraduationCap, Volume2, VolumeX, RotateCcw } from "lucide-react";
 import { DeltaMark } from "@/components/mark";
 import { Button } from "@/components/ui/button";
-import { useGame } from "@/game/use-game";
+import { HyperEngine, type GameState } from "@/game/engine3d";
+import { AudioFX } from "@/game/audio";
+import { GameHud3D } from "@/components/game/GameHud3D";
+import { AcademyOverlay } from "@/components/game/AcademyOverlay";
+import { TouchDeck } from "@/components/game/TouchDeck";
 
 export const Route = createFileRoute("/play")({ component: Play });
 
 function Play() {
-  const api = useGame();
-  const { snap, restart, move, rotate, softDrop, hardDrop, hold, phaseStep, confirm } = api;
-  const hdPct = Math.round(snap.hd * 100);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const engineRef = useRef<HyperEngine | null>(null);
+  const [gameState, setGameState] = useState<GameState>({
+    score: 0,
+    level: 1,
+    linesCleared: 0,
+    density: 0,
+    densityState: "neutral",
+    speedPerSec: "1.00",
+    speedStatus: "Half-Speed (Level 1 Start)",
+    isGameOver: false,
+    activePiece: null,
+    tutorialMode: false,
+    tutorialStepIndex: 0,
+    tutorialVerified: false,
+    notification: null,
+    l5ExampleIndex: 0,
+  });
+  const [muted, setMuted] = useState(AudioFX.muted);
 
+  // Initialize 3D Engine
+  useEffect(() => {
+    if (!canvasRef.current) return;
+    const engine = new HyperEngine(canvasRef.current, (s) => {
+      setGameState(s);
+    });
+    engineRef.current = engine;
+
+    const ro = new ResizeObserver(() => {
+      engine.resize();
+    });
+    ro.observe(canvasRef.current);
+
+    if (window.location.search.includes("academy")) {
+      engine.startTutorial();
+    }
+
+    return () => {
+      ro.disconnect();
+      engine.dispose();
+      engineRef.current = null;
+    };
+  }, []);
+
+  const toggleSound = useCallback(() => {
+    const isMuted = AudioFX.toggleMute();
+    setMuted(isMuted);
+  }, []);
+
+  const toggleAcademy = useCallback(() => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    if (gameState.tutorialMode) {
+      engine.exitTutorial();
+    } else {
+      engine.startTutorial();
+    }
+  }, [gameState.tutorialMode]);
+
+  // Global Keyboard Controls
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
-      if (snap.status !== "playing") {
-        if (e.key === "Enter") restart();
+      const engine = engineRef.current;
+      if (!engine) return;
+
+      if (gameState.isGameOver) {
+        if (e.key === "Enter" || e.code === "Space") {
+          engine.resetGame();
+        }
         return;
       }
+
       const code = e.code;
       const prevent = new Set([
         "ArrowLeft",
@@ -31,161 +94,230 @@ function Play() {
         "Space",
         "KeyA",
         "KeyD",
+        "KeyW",
+        "KeyS",
         "KeyQ",
         "KeyE",
         "KeyR",
-        "KeyF",
-        "KeyC",
         "KeyZ",
         "KeyX",
-        "Enter",
       ]);
       if (prevent.has(code)) e.preventDefault();
+
       switch (code) {
         case "ArrowLeft":
-          move(-1, 0, 0, 0);
+        case "KeyA":
+          engine.movePiece(-1, 0, 0);
           break;
         case "ArrowRight":
-          move(1, 0, 0, 0);
-          break;
-        case "ArrowDown":
-          softDrop();
+        case "KeyD":
+          engine.movePiece(1, 0, 0);
           break;
         case "ArrowUp":
-          rotate("xy");
+        case "KeyW":
+          engine.movePiece(0, 1, 0);
+          break;
+        case "ArrowDown":
+        case "KeyS":
+          engine.movePiece(0, -1, 0);
           break;
         case "Space":
-          hardDrop();
-          break;
-        case "KeyA":
-          move(0, -1, 0, 0);
-          break;
-        case "KeyD":
-          move(0, 1, 0, 0);
-          break;
-        case "KeyQ":
-          move(0, 0, 0, -1);
-          break;
-        case "KeyE":
-          move(0, 0, 0, 1);
-          break;
-        case "KeyR":
-          rotate("xw");
-          break;
-        case "KeyF":
-          rotate("xz");
+          engine.hardDrop();
           break;
         case "KeyC":
-          hold();
+          engine.softDrop();
           break;
-        case "Enter":
-          confirm();
+        case "KeyR":
+          engine.rotatePiece("x", 1);
+          break;
+        case "KeyQ":
+          engine.rotatePiece("z", -1);
+          break;
+        case "KeyE":
+          engine.rotatePiece("z", 1);
           break;
         case "KeyZ":
-          phaseStep(-1);
+          engine.rotatePiece("y", -1);
           break;
         case "KeyX":
-          phaseStep(1);
+          engine.rotatePiece("y", 1);
+          break;
+        case "KeyH":
+          toggleAcademy();
+          break;
+        case "KeyM":
+          toggleSound();
           break;
       }
     };
+
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [snap.status, restart, move, rotate, softDrop, hardDrop, hold, phaseStep, confirm]);
+  }, [gameState.isGameOver, toggleAcademy, toggleSound]);
+
+  const densityPct = Math.round(gameState.density * 100);
 
   return (
-    <div className="game-shell min-h-dvh overflow-x-hidden bg-bg text-fg lg:overflow-visible">
+    <div className="game-shell min-h-dvh overflow-x-hidden bg-bg text-fg">
+      {/* Top Header */}
       <header
-        className="sticky top-0 z-20 border-b border-border bg-bg/80 backdrop-blur-xl"
+        className="sticky top-0 z-30 border-b border-border bg-bg/85 backdrop-blur-xl"
         style={{ paddingTop: "env(safe-area-inset-top)" }}
       >
-        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-5">
+        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6">
           <Link
             to="/"
             className="flex items-center gap-2 text-sm text-muted transition-colors hover:text-fg"
           >
             <ArrowLeft className="size-4" />
-            Back
+            <span className="hidden sm:inline">Landing</span>
           </Link>
+
           <div className="flex items-center gap-2">
             <span className="relative grid size-6 place-items-center">
-              <span className="absolute size-6 rounded bg-accent/40 blur-[5px] opacity-50" />
+              <span className="absolute size-6 rounded bg-accent/40 blur-[5px] opacity-60" />
               <DeltaMark className="relative size-3.5" />
             </span>
-            <span className="font-display text-xs tracking-[0.2em]">
+            <span className="font-display text-sm tracking-[0.2em]">
               NESTRIS <span className="text-accent">Δ</span>
-              <span className="text-subtle"> · prototype</span>
+              <span className="text-subtle text-xs hidden sm:inline"> · 4D Hyper-Well</span>
             </span>
           </div>
-          <span className="hidden text-[11px] text-subtle sm:block">v0.1 · 4D engine</span>
-        </div>
-      </header>
 
-      <main className="game-main mx-auto flex max-w-6xl flex-col gap-2 px-3 py-2 sm:gap-4 sm:px-4 sm:py-5 lg:grid lg:h-auto lg:grid-cols-[minmax(0,1fr)_280px] lg:gap-6 lg:px-6">
-        <div className="flex min-h-0 flex-1 flex-col gap-2 sm:gap-4">
-          <div className="grid shrink-0 grid-cols-3 gap-2 lg:hidden">
-            <MobileStat label="Score" value={snap.score.toLocaleString()} />
-            <MobileStat label="Level" value={String(snap.level)} />
-            <MobileStat label="Density" value={`${hdPct}%`} accent={snap.hdState === "pressure"} />
-          </div>
-          <DualWells api={api} />
-          <ControlPads api={api} />
-          <p className="hidden text-[12px] leading-relaxed text-muted sm:block">
-            <span className="font-medium text-fg">Controls:</span> ←/→ move x · ↓ soft drop ·
-            Space hard drop · ↑ rotate (xy) · R rotate phase (xw) · F rotate (xz) · A/D depth
-            (y) · Q/E phase (w) · Z/X Phase Slide · Enter confirm · C hold.
-          </p>
-          <p className="hidden text-[12px] leading-relaxed text-subtle sm:hidden">
-            Swipe the board ←/→ to move, ↓ to soft drop, flick down to hard drop, tap to rotate.
-            Pads below handle depth, phase, and Phase Slide.
-          </p>
-          <p className="mt-auto text-center text-[10px] tracking-wide text-subtle sm:hidden">
-            Swipe a board to move · tap to rotate · use the pads for phase
-          </p>
-          <p className="hidden text-[12px] leading-relaxed text-muted sm:block">
-            Clear a full <span className="text-fg">x·y·w hyper-slab</span> at one height. Nest
-            small pieces into hyperpockets (≥6/8 shielded) across phase to raise{" "}
-            <span className="text-accent">hyperdensity</span> — stack only in one brane and the
-            shadow-stacking penalty kills you faster.
-          </p>
-        </div>
-        <div className="hidden lg:block">
-          <GameHud api={api} />
-        </div>
-      </main>
+          <div className="flex items-center gap-2">
+            <Button
+              variant={gameState.tutorialMode ? "primary" : "outline"}
+              onClick={toggleAcademy}
+              className="h-8 px-2.5 text-xs"
+            >
+              <GraduationCap className="size-3.5 sm:mr-1" />
+              <span className="hidden sm:inline">
+                {gameState.tutorialMode ? "Academy Active" : "🎓 Academy"}
+              </span>
+            </Button>
 
-      {snap.status === "over" ? (
-        <div className="fixed inset-0 z-30 grid place-items-center bg-bg/70 px-6 backdrop-blur-sm">
-          <div className="w-full max-w-sm rounded-xl border border-border bg-surface p-6 text-center shadow-[0_24px_80px_rgba(0,0,0,0.45)]">
-            <div className="font-display text-lg text-danger">Hyper-well collapse</div>
-            <div className="mt-1 text-sm text-muted">
-              Final score {snap.score.toLocaleString()}
-            </div>
-            <Button onClick={restart} className="mt-5 w-full">
-              Re-enter the transdimension
+            <Button
+              variant="outline"
+              onClick={toggleSound}
+              className="size-8 p-0"
+              title={muted ? "Unmute Sound" : "Mute Sound"}
+            >
+              {muted ? <VolumeX className="size-3.5 text-danger" /> : <Volume2 className="size-3.5 text-ok" />}
+            </Button>
+
+            <Button
+              variant="outline"
+              onClick={() => engineRef.current?.resetGame()}
+              className="size-8 p-0"
+              title="Reset Game"
+            >
+              <RotateCcw className="size-3.5" />
             </Button>
           </div>
         </div>
-      ) : null}
-    </div>
-  );
-}
+      </header>
 
-function MobileStat({
-  label,
-  value,
-  accent,
-}: {
-  label: string;
-  value: string;
-  accent?: boolean;
-}) {
-  return (
-    <div className="rounded-md border border-border bg-surface-2/80 px-2.5 py-1.5">
-      <div className="text-[9px] tracking-[0.18em] text-subtle uppercase">{label}</div>
-      <div className={accent ? "text-danger text-sm tabular-nums" : "text-fg text-sm tabular-nums"}>
-        {value}
-      </div>
+      {/* Main Game Arena */}
+      <main className="mx-auto max-w-6xl p-3 sm:p-5 lg:grid lg:grid-cols-[minmax(0,1fr)_300px] lg:gap-6">
+        <div className="flex flex-col gap-3">
+          {/* Mobile quick stats banner */}
+          <div className="grid grid-cols-3 gap-2 lg:hidden">
+            <div className="rounded-lg border border-border bg-surface-2/80 px-2.5 py-1.5">
+              <div className="text-[9px] tracking-wider uppercase text-subtle">Score</div>
+              <div className="text-sm font-display text-fg tabular-nums">
+                {gameState.score.toLocaleString()}
+              </div>
+            </div>
+            <div className="rounded-lg border border-border bg-surface-2/80 px-2.5 py-1.5">
+              <div className="text-[9px] tracking-wider uppercase text-subtle">Level</div>
+              <div className="text-sm font-mono text-fg tabular-nums">{gameState.level}</div>
+            </div>
+            <div className="rounded-lg border border-border bg-surface-2/80 px-2.5 py-1.5">
+              <div className="text-[9px] tracking-wider uppercase text-subtle">Density</div>
+              <div
+                className={`text-sm font-mono tabular-nums ${
+                  gameState.densityState === "pressure"
+                    ? "text-danger"
+                    : gameState.densityState === "breathing"
+                    ? "text-ok"
+                    : "text-accent"
+                }`}
+              >
+                {densityPct}%
+              </div>
+            </div>
+          </div>
+
+          {/* 3D Viewport container */}
+          <div className="relative aspect-[4/3] w-full min-h-[380px] sm:min-h-[480px] lg:min-h-[560px] overflow-hidden rounded-2xl border border-border bg-[#06060c] shadow-[0_20px_60px_rgba(0,0,0,0.85)]">
+            <canvas ref={canvasRef} className="h-full w-full block cursor-grab active:cursor-grabbing" />
+
+            {/* In-game Notification Toast */}
+            {gameState.notification && (
+              <div className="pointer-events-none absolute bottom-4 inset-x-4 z-20 flex justify-center">
+                <div className="max-w-md rounded-xl border border-accent/40 bg-surface/90 px-4 py-2 text-center text-xs font-medium text-accent shadow-[0_8px_32px_rgba(0,0,0,0.7)] backdrop-blur-md">
+                  {gameState.notification}
+                </div>
+              </div>
+            )}
+
+            {/* Interactive Academy Overlay */}
+            <AcademyOverlay
+              engine={engineRef.current}
+              state={gameState}
+              onClose={() => engineRef.current?.exitTutorial()}
+            />
+
+            {/* Quick helper tag */}
+            <div className="pointer-events-none absolute top-3 left-3 hidden rounded-md bg-surface-2/70 px-2 py-1 text-[10px] font-mono text-subtle backdrop-blur-sm sm:block">
+              Drag to Orbit · Scroll to Zoom
+            </div>
+          </div>
+
+          {/* Touch Deck for mobile and tactile steering */}
+          <TouchDeck engine={engineRef.current} />
+
+          <p className="hidden text-xs text-subtle sm:block leading-relaxed">
+            <strong className="text-muted">Pro tip:</strong> Level 1 begins at half-speed tempo
+            allowing spatial exploration. Rotate in 3 axes (<kbd className="text-fg">R</kbd> Pitch,{" "}
+            <kbd className="text-fg">Q/E</kbd> Yaw, <kbd className="text-fg">Z/X</kbd> Roll) to nest
+            nimble half-size pieces into host pockets and maximize density.
+          </p>
+        </div>
+
+        {/* Desktop Sidebar HUD */}
+        <div className="hidden lg:block">
+          <GameHud3D
+            engine={engineRef.current}
+            state={gameState}
+            onToggleAcademy={toggleAcademy}
+          />
+        </div>
+      </main>
+
+      {/* Game Over Modal */}
+      {gameState.isGameOver && (
+        <div className="fixed inset-0 z-40 grid place-items-center bg-bg/80 px-4 backdrop-blur-md">
+          <div className="w-full max-w-sm rounded-2xl border border-border bg-surface p-6 text-center shadow-[0_24px_80px_rgba(0,0,0,0.85)]">
+            <div className="font-display text-2xl text-danger">Hyper-well collapse</div>
+            <p className="mt-2 text-xs text-muted">
+              Spatial envelope reached maximum capacity.
+            </p>
+            <div className="my-4 rounded-xl border border-border bg-surface-2/60 p-3">
+              <div className="text-[10px] uppercase tracking-wider text-subtle">Final Score</div>
+              <div className="mt-0.5 font-display text-3xl font-medium text-fg tabular-nums">
+                {gameState.score.toLocaleString()}
+              </div>
+            </div>
+            <Button
+              onClick={() => engineRef.current?.resetGame()}
+              className="w-full"
+            >
+              Re-enter the Transdimension
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
