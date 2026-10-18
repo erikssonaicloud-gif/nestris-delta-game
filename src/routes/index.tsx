@@ -112,14 +112,14 @@ function Home() {
               fourth axis. The successor to NESTRIS 3D pushes the puzzle one dimension up.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
-              <a href="#editions">
-                <Button>Pre-order now</Button>
-              </a>
+              <Link to="/play?academy=1">
+                <Button>🎓 Spatial Academy</Button>
+              </Link>
               <Link to="/play">
                 <Button variant="outline">Play the prototype</Button>
               </Link>
-              <a href="#leap">
-                <Button variant="ghost">Explore the math</Button>
+              <a href="#editions">
+                <Button variant="ghost">Pre-order editions</Button>
               </a>
             </div>
             <div className="mt-12 flex gap-8 text-sm">
